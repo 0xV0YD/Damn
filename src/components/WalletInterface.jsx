@@ -169,13 +169,14 @@ const WalletInterface = () => {
       speak(`Last: Sent ${last.amount} to ${last.recipient}`);
     }
   };
-  const handleSendInit = () => { setFlowState('SEND_RECIPIENT'); speak("Recipient?").then(startListening); };
-  const handleRecipientInput = (name) => { setTempData(p => ({ ...p, recipient: name })); setFlowState('SEND_AMOUNT'); speak(`Amount for ${name} ? `).then(startListening); };
+  const handleSendInit = () => { setFlowState('SEND_RECIPIENT'); speak("Recipient?").then(() => setTimeout(startListening, 200)); };
+  const handleRecipientInput = (name) => { setTempData(p => ({ ...p, recipient: name })); setFlowState('SEND_AMOUNT'); speak(`Amount for ${name} ? `).then(() => setTimeout(startListening, 200)); };
   const handleAmountInput = (input) => {
     const nums = input.match(/\d+/);
     if (!nums) { speak("Repeat amount.").then(startListening); return; }
     const amt = parseInt(nums[0]);
-    setTempData(p => ({ ...p, amount: amt })); setFlowState('SEND_CONFIRM'); speak(`Send ${amt} to ${tempData.recipient}?`).then(startListening);
+
+    setTempData(p => ({ ...p, amount: amt })); setFlowState('SEND_CONFIRM'); speak(`Send ${amt} to ${tempData.recipient}?`).then(() => setTimeout(startListening, 200));
   };
   const handleSendExecute = () => {
     setBalance(p => p - tempData.amount);
@@ -183,8 +184,8 @@ const WalletInterface = () => {
     resetFlow(`Sent ${tempData.amount}.`);
     setLastAction(`Sent ${tempData.amount} to ${tempData.recipient} `);
   };
-  const handleAddContactInit = () => { setFlowState('ADD_CONTACT_NAME'); speak("Name?").then(startListening); };
-  const handleAddContactName = (name) => { setTempData(p => ({ ...p, contactName: name })); setFlowState('ADD_CONTACT_CONFIRM'); speak(`Add ${name}?`).then(startListening); };
+  const handleAddContactInit = () => { setFlowState('ADD_CONTACT_NAME'); speak("Name?").then(() => setTimeout(startListening, 200)); };
+  const handleAddContactName = (name) => { setTempData(p => ({ ...p, contactName: name })); setFlowState('ADD_CONTACT_CONFIRM'); speak(`Add ${name}?`).then(() => setTimeout(startListening, 200)); };
   const handleAddContactExecute = () => { setWhitelist(p => [...p, tempData.contactName]); resetFlow("Added."); setLastAction(`Added ${tempData.contactName} `); };
 
   // Keyboard Shortcuts
@@ -295,7 +296,12 @@ const WalletInterface = () => {
         <main className="flex-1 flex flex-col items-center justify-center w-full max-w-lg gap-12">
 
           {/* The Orb */}
-          <div className="relative group cursor-pointer" onClick={() => !isListening && startListening()}>
+          <div
+            className="relative group cursor-pointer"
+            onClick={(e) => { e.stopPropagation(); !isListening && startListening(); }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+          >
             <motion.div
               animate={{
                 scale: isListening ? [1, 1.2, 1] : 1,
@@ -370,6 +376,8 @@ const CyberButton = ({ icon, label, onClick }) => (
     whileHover={{ scale: 1.05, backgroundColor: "rgba(6,182,212,0.2)" }}
     whileTap={{ scale: 0.95 }}
     onClick={(e) => { e.stopPropagation(); onClick(); }}
+    onMouseDown={(e) => e.stopPropagation()}
+    onTouchStart={(e) => e.stopPropagation()}
     className="relative group overflow-hidden border border-cyan-500/30 bg-black/50 backdrop-blur-sm p-6 flex flex-col items-center gap-3"
   >
     <div className="absolute inset-0 bg-cyan-500/10 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
