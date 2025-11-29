@@ -17,16 +17,28 @@ export const useVoice = () => {
     }
 
     const speak = useCallback((text) => {
-        if (!window.speechSynthesis) return;
+        return new Promise((resolve) => {
+            if (!window.speechSynthesis) {
+                resolve();
+                return;
+            }
 
-        // Cancel any ongoing speech
-        window.speechSynthesis.cancel();
+            // Cancel any ongoing speech
+            window.speechSynthesis.cancel();
 
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.onstart = () => setIsSpeaking(true);
-        utterance.onend = () => setIsSpeaking(false);
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.onstart = () => setIsSpeaking(true);
+            utterance.onend = () => {
+                setIsSpeaking(false);
+                resolve();
+            };
+            utterance.onerror = () => {
+                setIsSpeaking(false);
+                resolve();
+            };
 
-        window.speechSynthesis.speak(utterance);
+            window.speechSynthesis.speak(utterance);
+        });
     }, []);
 
     const startListening = useCallback(() => {

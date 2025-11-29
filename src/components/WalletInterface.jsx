@@ -1,7 +1,9 @@
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useVoice } from '../hooks/useVoice';
-import { Mic, MicOff, Wallet, History, Send, UserPlus, ShieldCheck, Zap, Activity } from 'lucide-react';
+import { useHaptics } from '../hooks/useHaptics';
+import { useGestures } from '../hooks/useGestures';
+import { Mic, MicOff, Wallet, History, Send, UserPlus, ShieldCheck, Zap, Activity, HelpCircle } from 'lucide-react';
 import { motion, AnimatePresence, useAnimation } from 'framer-motion';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -10,13 +12,17 @@ const cn = (...inputs) => twMerge(clsx(inputs));
 
 const WalletInterface = () => {
   const { speak, startListening, transcript, isListening, setTranscript } = useVoice();
+  const { trigger, vibrate, getBraillePattern } = useHaptics();
   const [balance, setBalance] = useState(500);
   const [lastAction, setLastAction] = useState('');
 
   // State Machine
+  // State Machine
   const [flowState, setFlowState] = useState('IDLE');
+
   const [tempData, setTempData] = useState({ recipient: '', amount: 0, contactName: '' });
   const [whitelist, setWhitelist] = useState(['Alice', 'Bob']);
+  const [history, setHistory] = useState([]);
 
   // Refs for canvas animation
   const canvasRef = useRef(null);
@@ -134,7 +140,7 @@ const WalletInterface = () => {
         else if (command.includes('history')) handleHistory();
         else if (command.includes('send') || command.includes('transfer')) handleSendInit();
         else if (command.includes('add contact') || command.includes('whitelist')) handleAddContactInit();
-        else speak(`Command not recognized: ${command} `);
+        else speak(`Command not recognized: ${command} `).then(startListening);
         break;
       case 'SEND_RECIPIENT': handleRecipientInput(command); break;
       case 'SEND_AMOUNT': handleAmountInput(command); break;
@@ -154,27 +160,120 @@ const WalletInterface = () => {
 
   const resetFlow = (msg) => { setFlowState('IDLE'); setTempData({ recipient: '', amount: 0, contactName: '' }); if (msg) speak(msg); };
   const handleCheckBalance = () => { setLastAction('Balance Checked'); speak(`Balance: ${balance} USDC`); };
-  const handleHistory = () => { setLastAction('History Checked'); speak("Last: +50 USDC from Alice"); };
-  const handleSendInit = () => { setFlowState('SEND_RECIPIENT'); speak("Recipient?"); setTimeout(startListening, 2000); };
-  const handleRecipientInput = (name) => { setTempData(p => ({ ...p, recipient: name })); setFlowState('SEND_AMOUNT'); speak(`Amount for ${name} ? `); setTimeout(startListening, 3000); };
+  const handleHistory = () => {
+    setLastAction('History Checked');
+    if (history.length === 0) {
+      speak("No recent transactions.");
+    } else {
+      const last = history[history.length - 1];
+      speak(`Last: Sent ${last.amount} to ${last.recipient}`);
+    }
+  };
+  const handleSendInit = () => { setFlowState('SEND_RECIPIENT'); speak("Recipient?").then(startListening); };
+  const handleRecipientInput = (name) => { setTempData(p => ({ ...p, recipient: name })); setFlowState('SEND_AMOUNT'); speak(`Amount for ${name} ? `).then(startListening); };
   const handleAmountInput = (input) => {
     const nums = input.match(/\d+/);
-    if (!nums) { speak("Repeat amount."); setTimeout(startListening, 2000); return; }
+    if (!nums) { speak("Repeat amount.").then(startListening); return; }
     const amt = parseInt(nums[0]);
-    setTempData(p => ({ ...p, amount: amt })); setFlowState('SEND_CONFIRM'); speak(`Send ${amt} to ${tempData.recipient}?`); setTimeout(startListening, 4000);
+    setTempData(p => ({ ...p, amount: amt })); setFlowState('SEND_CONFIRM'); speak(`Send ${amt} to ${tempData.recipient}?`).then(startListening);
   };
-  const handleSendExecute = () => { setBalance(p => p - tempData.amount); resetFlow(`Sent ${tempData.amount}.`); setLastAction(`Sent ${tempData.amount} to ${tempData.recipient} `); };
-  const handleAddContactInit = () => { setFlowState('ADD_CONTACT_NAME'); speak("Name?"); setTimeout(startListening, 2000); };
-  const handleAddContactName = (name) => { setTempData(p => ({ ...p, contactName: name })); setFlowState('ADD_CONTACT_CONFIRM'); speak(`Add ${name}?`); setTimeout(startListening, 3000); };
+  const handleSendExecute = () => {
+    setBalance(p => p - tempData.amount);
+    setHistory(p => [...p, { type: 'sent', amount: tempData.amount, recipient: tempData.recipient, date: new Date() }]);
+    resetFlow(`Sent ${tempData.amount}.`);
+    setLastAction(`Sent ${tempData.amount} to ${tempData.recipient} `);
+  };
+  const handleAddContactInit = () => { setFlowState('ADD_CONTACT_NAME'); speak("Name?").then(startListening); };
+  const handleAddContactName = (name) => { setTempData(p => ({ ...p, contactName: name })); setFlowState('ADD_CONTACT_CONFIRM'); speak(`Add ${name}?`).then(startListening); };
   const handleAddContactExecute = () => { setWhitelist(p => [...p, tempData.contactName]); resetFlow("Added."); setLastAction(`Added ${tempData.contactName} `); };
+
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (flowState !== 'IDLE') return; // Only allow shortcuts in IDLE for now
+
+      const key = e.key.toLowerCase();
+      switch (key) {
+        case 'b':
+          trigger('click');
+          handleCheckBalance();
+          break;
+        case 'h':
+          trigger('click');
+          handleHistory();
+          break;
+        case 's':
+          trigger('click');
+          handleSendInit();
+          break;
+        case 'a':
+          trigger('click');
+          handleAddContactInit();
+          break;
+        case 'w':
+          trigger('click');
+          speak(`List: ${whitelist.join(', ')} `);
+          break;
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [flowState, whitelist, trigger, speak, startListening]); // Dependencies for closure capture
 
   const handleScreenClick = (e) => {
     if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
-    if (!isListening) { speak("Listening"); startListening(); }
+
+    if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+
+    // Onboarding logic removed
+
+    // Fallback if gestures don't catch it (e.g. desktop click without drag)
+
+    // Fallback if gestures don't catch it (e.g. desktop click without drag)
+    // But useGestures handles mouse events too, so we might not need this.
+    // Actually, let's keep it for "Listening" trigger if gestures are idle?
+    // No, gestures replace this.
   };
 
+  // Gesture Handlers
+  const onSingleTap = useCallback(() => {
+    console.log("onSingleTap called. FlowState:", flowState);
+    if (flowState !== 'IDLE') return;
+    trigger('click');
+    handleCheckBalance();
+  }, [flowState, trigger]);
+
+  const onDoubleTap = useCallback(() => {
+    console.log("onDoubleTap called. FlowState:", flowState);
+    if (flowState !== 'IDLE') return;
+    trigger('success'); // Distinct feel
+    handleHistory();
+  }, [flowState, trigger, history]); // Added history dependency
+
+  const onTripleTap = useCallback(() => {
+    console.log("onTripleTap called. FlowState:", flowState);
+    if (flowState !== 'IDLE') return;
+    trigger('warning'); // Heavy vibration
+    handleSendInit();
+  }, [flowState, trigger]);
+
+  const onLongPress = useCallback(() => {
+    console.log("onLongPress called. FlowState:", flowState);
+    if (flowState !== 'IDLE') return;
+    trigger('warning'); // Heavy vibration
+    handleSendInit();
+  }, [flowState, trigger]);
+
+  const gestureHandlers = useGestures({ onSingleTap, onDoubleTap, onLongPress, onTripleTap });
+
   return (
-    <div className="relative min-h-screen bg-black text-cyan-400 overflow-hidden font-mono select-none" onClick={handleScreenClick}>
+    <div
+      className="relative min-h-screen bg-black text-cyan-400 overflow-hidden font-mono select-none"
+      {...gestureHandlers}
+    >
       <canvas ref={canvasRef} className="absolute inset-0 z-0 opacity-60" />
 
       {/* Holographic Overlay */}
