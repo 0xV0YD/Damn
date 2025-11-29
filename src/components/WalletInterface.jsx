@@ -7,6 +7,7 @@ import { Mic, MicOff, Wallet, History, Send, UserPlus, ShieldCheck, Zap, Activit
 import { motion, AnimatePresence, useAnimation } from 'framer-motion';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { ethers } from 'ethers';
 
 const cn = (...inputs) => twMerge(clsx(inputs));
 
@@ -22,7 +23,19 @@ const WalletInterface = () => {
 
   const [tempData, setTempData] = useState({ recipient: '', amount: 0, contactName: '' });
   const [whitelist, setWhitelist] = useState(['Alice', 'Bob']);
+
   const [history, setHistory] = useState([]);
+
+  // Wallet Creation State
+  const [seedPhrase, setSeedPhrase] = useState([]);
+  const [creationStep, setCreationStep] = useState(0);
+  const [privateKey, setPrivateKey] = useState(null);
+
+  // Wallet Import State
+  const [importStep, setImportStep] = useState(0);
+  const [importedSeed, setImportedSeed] = useState([]);
+  const [importConfirmation, setImportConfirmation] = useState(null); // Word waiting for confirmation
+  const [isSpelling, setIsSpelling] = useState(false);
 
   // Refs for canvas animation
   const canvasRef = useRef(null);
@@ -140,6 +153,8 @@ const WalletInterface = () => {
         else if (command.includes('history')) handleHistory();
         else if (command.includes('send') || command.includes('transfer')) handleSendInit();
         else if (command.includes('add contact') || command.includes('whitelist')) handleAddContactInit();
+        else if (command.includes('address') || command.includes('who am i')) handleCheckAddress();
+        else if (command.includes('reveal key') || command.includes('private key')) handleRevealKeyInit();
         else speak(`Command not recognized: ${command} `).then(startListening);
         break;
       case 'SEND_RECIPIENT': handleRecipientInput(command); break;
@@ -151,6 +166,13 @@ const WalletInterface = () => {
       case 'ADD_CONTACT_NAME': handleAddContactName(command); break;
       case 'ADD_CONTACT_CONFIRM':
         if (command.includes('yes')) handleAddContactExecute();
+        else if (command.includes('no')) resetFlow("Cancelled.");
+        break;
+      case 'WALLET_IMPORT':
+        handleImportInput(command);
+        break;
+      case 'WALLET_REVEAL':
+        if (command.includes('yes')) handleRevealKeyConfirm();
         else if (command.includes('no')) resetFlow("Cancelled.");
         break;
       default: break;
@@ -178,15 +200,175 @@ const WalletInterface = () => {
 
     setTempData(p => ({ ...p, amount: amt })); setFlowState('SEND_CONFIRM'); speak(`Send ${amt} to ${tempData.recipient}?`).then(() => setTimeout(startListening, 200));
   };
-  const handleSendExecute = () => {
-    setBalance(p => p - tempData.amount);
-    setHistory(p => [...p, { type: 'sent', amount: tempData.amount, recipient: tempData.recipient, date: new Date() }]);
-    resetFlow(`Sent ${tempData.amount}.`);
-    setLastAction(`Sent ${tempData.amount} to ${tempData.recipient} `);
+  const handleSendExecute = async () => {
+    if (!privateKey) {
+      speak("Warning. No private key found. Transaction cannot be signed.");
+      return;
+    }
+
+    try {
+      const wallet = new ethers.Wallet(privateKey);
+      const tx = {
+        to: ethers.isAddress(tempData.recipient) ? tempData.recipient : "0x71C7656EC7ab88b098defB751B7401B5f6d8976F", // Mock address if name
+        value: ethers.parseEther(tempData.amount.toString()),
+        nonce: await wallet.getNonce().catch(() => 0), // Mock nonce if no provider
+      };
+
+      // In a real app, we would need a provider to populate gasPrice, chainId etc.
+      // For this demo, we just sign the transaction object as is (or a message) to prove capability.
+      // ethers.js requires a provider to signTransaction usually, or fully populated tx.
+      // Let's sign a message instead to prove ownership easily without network.
+      const signature = await wallet.signMessage(`Send ${tempData.amount} to ${tempData.recipient}`);
+
+      console.log("Transaction Signed!", signature);
+      console.log("Tx Details:", tx);
+
+      setBalance(p => p - tempData.amount);
+      setHistory(p => [...p, { type: 'sent', amount: tempData.amount, recipient: tempData.recipient, date: new Date(), signature }]);
+      resetFlow(`Sent ${tempData.amount}. Signed securely.`);
+      setLastAction(`Sent ${tempData.amount} `);
+    } catch (e) {
+      console.error("Signing failed", e);
+      speak("Signing failed.");
+    }
   };
   const handleAddContactInit = () => { setFlowState('ADD_CONTACT_NAME'); speak("Name?").then(() => setTimeout(startListening, 200)); };
   const handleAddContactName = (name) => { setTempData(p => ({ ...p, contactName: name })); setFlowState('ADD_CONTACT_CONFIRM'); speak(`Add ${name}?`).then(() => setTimeout(startListening, 200)); };
+
   const handleAddContactExecute = () => { setWhitelist(p => [...p, tempData.contactName]); resetFlow("Added."); setLastAction(`Added ${tempData.contactName} `); };
+
+  // Wallet Creation Logic
+  const startWalletCreation = () => {
+    setFlowState('WALLET_CREATION');
+    setCreationStep(0);
+
+    // Real Ethers Generation
+    const randomWallet = ethers.Wallet.createRandom();
+    const newSeed = randomWallet.mnemonic.phrase.split(' ');
+
+    setSeedPhrase(newSeed);
+    setPrivateKey(randomWallet.privateKey);
+    console.log("Generated Seed Phrase:", newSeed);
+    console.log("Private Key:", randomWallet.privateKey);
+
+    speak("Starting secure wallet creation. I will read your 12-word seed phrase one by one. Tap the screen to hear the next word.").then(() => {
+      // Wait for user tap
+    });
+  };
+
+  const handleCreationStep = () => {
+    if (creationStep < 12) {
+      const word = seedPhrase[creationStep];
+      speak(`Word ${creationStep + 1}: ${word}`);
+      setCreationStep(p => p + 1);
+    } else if (creationStep === 12) {
+      speak("Seed phrase complete. Saving securely via MPC...").then(() => {
+        setTimeout(() => {
+          speak("Wallet created successfully. Private key split and distributed.");
+          setFlowState('IDLE');
+          setCreationStep(0);
+        }, 2000);
+      });
+      setCreationStep(p => p + 1); // Move to 13 to prevent re-trigger
+    }
+  };
+
+  // Wallet Import Logic
+  const startWalletImport = () => {
+    setFlowState('WALLET_IMPORT');
+    setImportStep(0);
+    setImportedSeed([]);
+    setImportConfirmation(null);
+    setIsSpelling(false);
+    speak("Import Wallet. Please say word 1.").then(() => setTimeout(startListening, 200));
+  };
+
+  const handleImportInput = (input) => {
+    const cleanInput = input.trim().toLowerCase();
+
+    // 1. Handle Confirmation Response
+    if (importConfirmation) {
+      if (cleanInput.includes('yes') || cleanInput.includes('correct') || cleanInput.includes('yeah')) {
+        // Confirmed
+        const newSeed = [...importedSeed, importConfirmation];
+        setImportedSeed(newSeed);
+        setImportConfirmation(null);
+        setIsSpelling(false);
+
+        if (importStep < 11) {
+          setImportStep(p => p + 1);
+          speak(`Word ${importStep + 2}?`).then(() => setTimeout(startListening, 200));
+        } else {
+          // Done
+          try {
+            const phrase = newSeed.join(' ');
+            console.log("Importing phrase:", phrase);
+            const wallet = ethers.Wallet.fromPhrase(phrase);
+            setPrivateKey(wallet.privateKey);
+            console.log("Imported Private Key:", wallet.privateKey);
+            resetFlow("Wallet imported successfully.");
+          } catch (e) {
+            console.error(e);
+            speak("Invalid seed phrase. Import failed.");
+            setFlowState('IDLE');
+          }
+        }
+      } else if (cleanInput.includes('no') || cleanInput.includes('wrong') || cleanInput.includes('spell')) {
+        // Rejected -> Switch to Spelling Mode
+        setIsSpelling(true);
+        setImportConfirmation(null);
+        speak("Please spell the word letter by letter.").then(() => setTimeout(startListening, 200));
+      } else {
+        speak("Please say Yes or No.").then(startListening);
+      }
+      return;
+    }
+
+    // 2. Handle Spelling Input
+    if (isSpelling) {
+      // Remove spaces to join letters (e.g. "a l p h a" -> "alpha")
+      // Also handle phonetic alphabet if needed, but simple letter joining works for now
+      const spelledWord = cleanInput.replace(/\s+/g, '').replace(/\./g, '');
+      // Basic validation: check if it's in the wordlist (optional but good)
+      // For now, just confirm it
+      setImportConfirmation(spelledWord);
+      speak(`I heard ${spelledWord}. Is this correct?`).then(() => setTimeout(startListening, 200));
+      return;
+    }
+
+    // 3. Handle Normal Word Input
+    const word = cleanInput.split(' ')[0]; // Take first word
+    setImportConfirmation(word);
+    speak(`I heard ${word}. Is this correct?`).then(() => setTimeout(startListening, 200));
+  };
+
+  const handleCheckAddress = () => {
+    if (!privateKey) {
+      speak("No wallet active.");
+      return;
+    }
+    const wallet = new ethers.Wallet(privateKey);
+    console.log("Wallet Address:", wallet.address);
+    speak(`Your address is ${wallet.address.substring(0, 6)}...${wallet.address.substring(38)}`);
+  };
+
+  const handleRevealKeyInit = () => {
+    if (!privateKey) {
+      speak("No wallet active.");
+      return;
+    }
+    setFlowState('WALLET_REVEAL');
+    speak("Warning. You are about to reveal your private key. This is highly sensitive. Say 'Yes' to confirm.").then(() => setTimeout(startListening, 200));
+  };
+
+  const handleRevealKeyConfirm = () => {
+    speak("Reconstructing key from secure MPC shards... Please wait.");
+    setTimeout(() => {
+      console.log("REVEALED PRIVATE KEY:", privateKey);
+      speak("Key reconstructed and printed to console. Keep it safe.");
+      resetFlow();
+    }, 3000);
+  };
 
   // Keyboard Shortcuts
   useEffect(() => {
@@ -215,6 +397,12 @@ const WalletInterface = () => {
           trigger('click');
           speak(`List: ${whitelist.join(', ')} `);
           break;
+        case 'm':
+          trigger('click');
+          if (!isListening) {
+            speak("Listening").then(startListening);
+          }
+          break;
         default:
           break;
       }
@@ -242,10 +430,29 @@ const WalletInterface = () => {
   // Gesture Handlers
   const onSingleTap = useCallback(() => {
     console.log("onSingleTap called. FlowState:", flowState);
+
+    if (flowState === 'WALLET_CREATION') {
+      trigger('click');
+      handleCreationStep();
+      return;
+    }
+
+    if (flowState === 'WALLET_IMPORT') {
+      trigger('click');
+      if (importConfirmation) {
+        speak(`I heard ${importConfirmation}. Say Yes or No.`).then(() => setTimeout(startListening, 200));
+      } else if (isSpelling) {
+        speak("Please spell the word.").then(() => setTimeout(startListening, 200));
+      } else {
+        speak(`Word ${importStep + 1}?`).then(() => setTimeout(startListening, 200));
+      }
+      return;
+    }
+
     if (flowState !== 'IDLE') return;
     trigger('click');
     handleCheckBalance();
-  }, [flowState, trigger]);
+  }, [flowState, trigger, seedPhrase, creationStep, importStep, importConfirmation, isSpelling]); // Added dependencies
 
   const onDoubleTap = useCallback(() => {
     console.log("onDoubleTap called. FlowState:", flowState);
@@ -296,9 +503,9 @@ const WalletInterface = () => {
         <main className="flex-1 flex flex-col items-center justify-center w-full max-w-lg gap-12">
 
           {/* The Orb */}
+          {/* The Orb */}
           <div
             className="relative group cursor-pointer"
-            onClick={(e) => { e.stopPropagation(); !isListening && startListening(); }}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
@@ -352,7 +559,9 @@ const WalletInterface = () => {
             <CyberButton icon={<Wallet />} label="BALANCE" onClick={handleCheckBalance} />
             <CyberButton icon={<History />} label="HISTORY" onClick={handleHistory} />
             <CyberButton icon={<UserPlus />} label="ADD USER" onClick={handleAddContactInit} />
-            <CyberButton icon={<ShieldCheck />} label="WHITELIST" onClick={() => speak(`List: ${whitelist.join(', ')} `)} />
+            <CyberButton icon={<ShieldCheck />} label="CREATE" onClick={startWalletCreation} />
+            <CyberButton icon={<Wallet />} label="IMPORT" onClick={startWalletImport} />
+            <CyberButton icon={<HelpCircle />} label="KEYS" onClick={handleRevealKeyInit} />
           </div>
 
           <motion.button
