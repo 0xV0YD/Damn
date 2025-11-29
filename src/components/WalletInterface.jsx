@@ -1,184 +1,290 @@
-import React, { useEffect, useState } from 'react';
+
+import React, { useEffect, useState, useRef } from 'react';
 import { useVoice } from '../hooks/useVoice';
-import { Mic, MicOff, Wallet, History, Send } from 'lucide-react';
+import { Mic, MicOff, Wallet, History, Send, UserPlus, ShieldCheck, Zap, Activity } from 'lucide-react';
+import { motion, AnimatePresence, useAnimation } from 'framer-motion';
+import { clsx } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+const cn = (...inputs) => twMerge(clsx(inputs));
 
 const WalletInterface = () => {
-    const { speak, startListening, transcript, isListening, setTranscript } = useVoice();
-    const [balance, setBalance] = useState(500);
-    const [lastAction, setLastAction] = useState('');
+  const { speak, startListening, transcript, isListening, setTranscript } = useVoice();
+  const [balance, setBalance] = useState(500);
+  const [lastAction, setLastAction] = useState('');
 
-    const [flowState, setFlowState] = useState('IDLE'); // IDLE, SEND_RECIPIENT, SEND_CONFIRM
-    const [recipient, setRecipient] = useState('');
+  // State Machine
+  const [flowState, setFlowState] = useState('IDLE');
+  const [tempData, setTempData] = useState({ recipient: '', amount: 0, contactName: '' });
+  const [whitelist, setWhitelist] = useState(['Alice', 'Bob']);
 
-    // Initial Welcome
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            speak("Welcome to Blind Wallet. Double tap anywhere to check balance. Say 'History' for transactions, or 'Send' to transfer funds.");
-        }, 1000);
-        return () => clearTimeout(timer);
-    }, [speak]);
+  // Refs for canvas animation
+  const canvasRef = useRef(null);
 
-    // Handle Voice Commands
-    useEffect(() => {
-        if (!transcript) return;
+  // Initial Welcome
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      speak("System Online. Blind Wallet Active. Awaiting Command.");
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [speak]);
 
-        const command = transcript.toLowerCase();
-        console.log("Command received:", command, "State:", flowState);
+  // Canvas Animation Loop (The "Crazy" Visuals)
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    let animationFrameId;
+    let particles = [];
 
-        // Global Cancel
-        if (command.includes('cancel') || command.includes('stop')) {
-            setFlowState('IDLE');
-            speak("Cancelled. Back to main menu.");
-            setTranscript('');
-            return;
+    const resize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+    window.addEventListener('resize', resize);
+    resize();
+
+    class Particle {
+      constructor() {
+        this.x = Math.random() * canvas.width;
+        this.y = Math.random() * canvas.height;
+        this.size = Math.random() * 2 + 0.5;
+        this.speedX = Math.random() * 2 - 1;
+        this.speedY = Math.random() * 2 - 1;
+        this.color = `hsl(${Math.random() * 60 + 200}, 100 %, 50 %)`; // Blue/Cyan range
+      }
+      update() {
+        this.x += this.speedX;
+        this.y += this.speedY;
+        if (this.size > 0.2) this.size -= 0.01;
+        if (this.x < 0 || this.x > canvas.width) this.speedX *= -1;
+        if (this.y < 0 || this.y > canvas.height) this.speedY *= -1;
+      }
+      draw() {
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    const initParticles = () => {
+      for (let i = 0; i < 100; i++) {
+        particles.push(new Particle());
+      }
+    };
+    initParticles();
+
+    const animate = () => {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.1)'; // Trail effect
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      particles.forEach((p, index) => {
+        p.update();
+        p.draw();
+        // Connect particles
+        particles.forEach((p2, index2) => {
+          if (index === index2) return;
+          const dx = p.x - p2.x;
+          const dy = p.y - p2.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          if (distance < 100) {
+            ctx.strokeStyle = `rgba(0, 255, 255, ${1 - distance / 100})`;
+            ctx.lineWidth = 0.5;
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+          }
+        });
+      });
+
+      // If listening, add chaotic energy
+      if (isListening) {
+        for (let i = 0; i < 5; i++) {
+          particles.push(new Particle());
+          if (particles.length > 200) particles.shift();
         }
+      }
 
-        if (flowState === 'IDLE') {
-            if (command.includes('balance')) {
-                handleCheckBalance();
-            } else if (command.includes('history')) {
-                handleHistory();
-            } else if (command.includes('send') || command.includes('transfer')) {
-                handleSendInit();
-            } else {
-                speak(`I didn't understand ${command}. Please try again.`);
-            }
-        } else if (flowState === 'SEND_RECIPIENT') {
-            // Assume the entire transcript is the name
-            handleRecipientInput(command);
-        } else if (flowState === 'SEND_CONFIRM') {
-            if (command.includes('yes') || command.includes('confirm')) {
-                handleSendConfirm();
-            } else if (command.includes('no')) {
-                setFlowState('IDLE');
-                speak("Transaction cancelled.");
-            } else {
-                speak("Please say yes to confirm or no to cancel.");
-                setTimeout(startListening, 2000);
-            }
-        }
-
-        setTranscript(''); // Reset after processing
-    }, [transcript, speak, flowState]);
-
-    const handleCheckBalance = () => {
-        const text = `Your current balance is ${balance} USDC.`;
-        setLastAction('Checked Balance');
-        speak(text);
+      animationFrameId = requestAnimationFrame(animate);
     };
+    animate();
 
-    const handleHistory = () => {
-        const text = "Last transaction: Received 50 USDC from Alice yesterday.";
-        setLastAction('Checked History');
-        speak(text);
+    return () => {
+      window.removeEventListener('resize', resize);
+      cancelAnimationFrame(animationFrameId);
     };
+  }, [isListening]);
 
-    const handleSendInit = () => {
-        const text = "Who do you want to send money to? Please say the name.";
-        setLastAction('Initiated Send');
-        setFlowState('SEND_RECIPIENT');
-        speak(text);
-        setTimeout(startListening, 4000);
-    };
+  // Handle Voice Commands (Same logic, new style)
+  useEffect(() => {
+    if (!transcript) return;
+    const command = transcript.toLowerCase();
+    console.log("CMD:", command);
 
-    const handleRecipientInput = (name) => {
-        setRecipient(name);
-        const text = `Sending 10 USDC to ${name}. Say yes to confirm or no to cancel.`;
-        setLastAction(`Confirming: ${name}`);
-        setFlowState('SEND_CONFIRM');
-        speak(text);
-        setTimeout(startListening, 5000);
-    };
+    if (command.includes('cancel') || command.includes('stop')) {
+      resetFlow("Aborting.");
+      return;
+    }
 
-    const handleSendConfirm = () => {
-        const text = `Transaction sent to ${recipient}. Your new balance is ${balance - 10} USDC.`;
-        setBalance(prev => prev - 10);
-        setLastAction(`Sent to ${recipient}`);
-        setFlowState('IDLE');
-        speak(text);
-    };
+    switch (flowState) {
+      case 'IDLE':
+        if (command.includes('balance')) handleCheckBalance();
+        else if (command.includes('history')) handleHistory();
+        else if (command.includes('send') || command.includes('transfer')) handleSendInit();
+        else if (command.includes('add contact') || command.includes('whitelist')) handleAddContactInit();
+        else speak(`Command not recognized: ${command} `);
+        break;
+      case 'SEND_RECIPIENT': handleRecipientInput(command); break;
+      case 'SEND_AMOUNT': handleAmountInput(command); break;
+      case 'SEND_CONFIRM':
+        if (command.includes('yes')) handleSendExecute();
+        else if (command.includes('no')) resetFlow("Cancelled.");
+        break;
+      case 'ADD_CONTACT_NAME': handleAddContactName(command); break;
+      case 'ADD_CONTACT_CONFIRM':
+        if (command.includes('yes')) handleAddContactExecute();
+        else if (command.includes('no')) resetFlow("Cancelled.");
+        break;
+      default: break;
+    }
+    setTranscript('');
+  }, [transcript, flowState]);
 
-    // Gesture Handler (Double Tap)
-    // We use a simple click handler with timing for double tap simulation if needed, 
-    // but for accessibility, a large button is often better. 
-    // Let's implement a full-screen tap handler.
+  const resetFlow = (msg) => { setFlowState('IDLE'); setTempData({ recipient: '', amount: 0, contactName: '' }); if (msg) speak(msg); };
+  const handleCheckBalance = () => { setLastAction('Balance Checked'); speak(`Balance: ${balance} USDC`); };
+  const handleHistory = () => { setLastAction('History Checked'); speak("Last: +50 USDC from Alice"); };
+  const handleSendInit = () => { setFlowState('SEND_RECIPIENT'); speak("Recipient?"); setTimeout(startListening, 2000); };
+  const handleRecipientInput = (name) => { setTempData(p => ({ ...p, recipient: name })); setFlowState('SEND_AMOUNT'); speak(`Amount for ${name} ? `); setTimeout(startListening, 3000); };
+  const handleAmountInput = (input) => {
+    const nums = input.match(/\d+/);
+    if (!nums) { speak("Repeat amount."); setTimeout(startListening, 2000); return; }
+    const amt = parseInt(nums[0]);
+    setTempData(p => ({ ...p, amount: amt })); setFlowState('SEND_CONFIRM'); speak(`Send ${amt} to ${tempData.recipient}?`); setTimeout(startListening, 4000);
+  };
+  const handleSendExecute = () => { setBalance(p => p - tempData.amount); resetFlow(`Sent ${tempData.amount}.`); setLastAction(`Sent ${tempData.amount} to ${tempData.recipient} `); };
+  const handleAddContactInit = () => { setFlowState('ADD_CONTACT_NAME'); speak("Name?"); setTimeout(startListening, 2000); };
+  const handleAddContactName = (name) => { setTempData(p => ({ ...p, contactName: name })); setFlowState('ADD_CONTACT_CONFIRM'); speak(`Add ${name}?`); setTimeout(startListening, 3000); };
+  const handleAddContactExecute = () => { setWhitelist(p => [...p, tempData.contactName]); resetFlow("Added."); setLastAction(`Added ${tempData.contactName} `); };
 
-    const handleScreenClick = (e) => {
-        // Prevent double firing if clicking specific buttons
-        if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+  const handleScreenClick = (e) => {
+    if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+    if (!isListening) { speak("Listening"); startListening(); }
+  };
 
-        // Simple toggle for listening on single tap for now, or double tap logic
-        // Let's make single tap = Listen
-        if (!isListening) {
-            speak("Listening...");
-            startListening();
-        }
-    };
+  return (
+    <div className="relative min-h-screen bg-black text-cyan-400 overflow-hidden font-mono select-none" onClick={handleScreenClick}>
+      <canvas ref={canvasRef} className="absolute inset-0 z-0 opacity-60" />
 
-    return (
-        <div
-            className="min-h-screen bg-black text-yellow-400 p-6 flex flex-col items-center justify-center select-none"
-            onClick={handleScreenClick}
-        >
-            <header className="absolute top-4 w-full text-center">
-                <h1 className="text-4xl font-bold tracking-wider">BLIND WALLET</h1>
-                <p className="text-xl mt-2 text-white">Voice & Gesture Operated</p>
-            </header>
+      {/* Holographic Overlay */}
+      <div className="absolute inset-0 z-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 pointer-events-none mix-blend-overlay"></div>
+      <div className="absolute inset-0 z-0 bg-gradient-to-t from-black via-transparent to-black pointer-events-none"></div>
 
-            <main className="flex flex-col items-center space-y-12 w-full max-w-md">
+      <div className="relative z-10 flex flex-col items-center justify-between min-h-screen p-6">
 
-                {/* Status Display */}
-                <div className="text-center space-y-4" aria-live="polite">
-                    <div className="text-6xl font-mono font-bold text-white">
-                        ${balance}
-                    </div>
-                    <div className="text-2xl text-yellow-200">
-                        {lastAction || "Ready"}
-                    </div>
-                </div>
+        {/* Top HUD */}
+        <header className="w-full flex justify-between items-center border-b border-cyan-500/30 pb-4 backdrop-blur-sm">
+          <div className="flex items-center gap-2">
+            <Activity className="animate-pulse text-cyan-400" />
+            <span className="text-xs tracking-[0.3em] text-cyan-200">SYSTEM.READY</span>
+          </div>
+          <div className="text-xs text-cyan-600">{new Date().toLocaleTimeString()}</div>
+        </header>
 
-                {/* Visual Indicator for Listening */}
-                <div className={`p-8 rounded-full transition-all duration-300 ${isListening ? 'bg-red-600 scale-110' : 'bg-gray-800'}`}>
-                    {isListening ? <Mic size={64} className="text-white animate-pulse" /> : <MicOff size={64} className="text-gray-400" />}
-                </div>
+        {/* Central Core */}
+        <main className="flex-1 flex flex-col items-center justify-center w-full max-w-lg gap-12">
 
-                {/* Explicit Controls (for low vision users) */}
-                <div className="grid grid-cols-2 gap-6 w-full">
-                    <button
-                        onClick={(e) => { e.stopPropagation(); handleCheckBalance(); }}
-                        className="bg-gray-900 border-2 border-yellow-400 p-6 rounded-xl flex flex-col items-center hover:bg-gray-800 focus:ring-4 ring-yellow-200"
-                        aria-label="Check Balance"
-                    >
-                        <Wallet size={48} className="mb-2" />
-                        <span className="text-xl font-bold">Balance</span>
-                    </button>
+          {/* The Orb */}
+          <div className="relative group cursor-pointer" onClick={() => !isListening && startListening()}>
+            <motion.div
+              animate={{
+                scale: isListening ? [1, 1.2, 1] : 1,
+                rotate: isListening ? 360 : 0
+              }}
+              transition={{ duration: isListening ? 2 : 10, repeat: Infinity, ease: "linear" }}
+              className={cn(
+                "w-64 h-64 rounded-full border-4 flex items-center justify-center backdrop-blur-md transition-all duration-500",
+                isListening ? "border-red-500 bg-red-500/10 shadow-[0_0_100px_rgba(239,68,68,0.5)]" : "border-cyan-500 bg-cyan-500/5 shadow-[0_0_50px_rgba(6,182,212,0.3)]"
+              )}
+            >
+              <div className="absolute inset-2 rounded-full border border-dashed border-cyan-500/30 animate-spin-slow"></div>
+              <div className="absolute inset-8 rounded-full border border-dotted border-cyan-500/50 animate-reverse-spin"></div>
 
-                    <button
-                        onClick={(e) => { e.stopPropagation(); handleHistory(); }}
-                        className="bg-gray-900 border-2 border-yellow-400 p-6 rounded-xl flex flex-col items-center hover:bg-gray-800 focus:ring-4 ring-yellow-200"
-                        aria-label="Transaction History"
-                    >
-                        <History size={48} className="mb-2" />
-                        <span className="text-xl font-bold">History</span>
-                    </button>
-                </div>
+              <AnimatePresence mode="wait">
+                {isListening ? (
+                  <motion.div
+                    key="mic-on"
+                    initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}
+                  >
+                    <Mic size={64} className="text-red-500 drop-shadow-[0_0_10px_rgba(239,68,68,1)]" />
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="mic-off"
+                    initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}
+                  >
+                    <Zap size={64} className="text-cyan-400 drop-shadow-[0_0_10px_rgba(6,182,212,1)]" />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
 
-                <button
-                    onClick={(e) => { e.stopPropagation(); handleSendInit(); }}
-                    className="w-full bg-yellow-400 text-black p-6 rounded-xl flex items-center justify-center space-x-4 hover:bg-yellow-300 focus:ring-4 ring-white"
-                    aria-label="Send Money"
-                >
-                    <Send size={48} />
-                    <span className="text-3xl font-bold">SEND</span>
-                </button>
+            {/* Status Text */}
+            <motion.div
+              layout
+              className="absolute -bottom-16 left-0 right-0 text-center"
+            >
+              <h2 className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 to-blue-500 tracking-tighter">
+                ${balance}
+              </h2>
+              <p className="text-cyan-600 text-sm tracking-widest mt-2 uppercase">{lastAction || "Awaiting Input"}</p>
+            </motion.div>
+          </div>
 
-            </main>
+          {/* Action Matrix */}
+          <div className="grid grid-cols-2 gap-4 w-full mt-12">
+            <CyberButton icon={<Wallet />} label="BALANCE" onClick={handleCheckBalance} />
+            <CyberButton icon={<History />} label="HISTORY" onClick={handleHistory} />
+            <CyberButton icon={<UserPlus />} label="ADD USER" onClick={handleAddContactInit} />
+            <CyberButton icon={<ShieldCheck />} label="WHITELIST" onClick={() => speak(`List: ${whitelist.join(', ')} `)} />
+          </div>
 
-            <footer className="absolute bottom-8 text-center text-gray-500">
-                <p>Tap anywhere to speak</p>
-            </footer>
-        </div>
-    );
+          <motion.button
+            whileHover={{ scale: 1.05, letterSpacing: "0.2em" }}
+            whileTap={{ scale: 0.95 }}
+            onClick={(e) => { e.stopPropagation(); handleSendInit(); }}
+            className="w-full bg-cyan-500 text-black font-black py-6 text-2xl tracking-widest clip-path-polygon hover:bg-cyan-400 transition-colors shadow-[0_0_30px_rgba(6,182,212,0.5)]"
+            style={{ clipPath: "polygon(10% 0, 100% 0, 100% 70%, 90% 100%, 0 100%, 0 30%)" }}
+          >
+            INITIATE TRANSFER
+          </motion.button>
+
+        </main>
+      </div>
+    </div>
+  );
 };
 
+const CyberButton = ({ icon, label, onClick }) => (
+  <motion.button
+    whileHover={{ scale: 1.05, backgroundColor: "rgba(6,182,212,0.2)" }}
+    whileTap={{ scale: 0.95 }}
+    onClick={(e) => { e.stopPropagation(); onClick(); }}
+    className="relative group overflow-hidden border border-cyan-500/30 bg-black/50 backdrop-blur-sm p-6 flex flex-col items-center gap-3"
+  >
+    <div className="absolute inset-0 bg-cyan-500/10 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
+    <div className="relative z-10 text-cyan-400 group-hover:text-white transition-colors">
+      {React.cloneElement(icon, { size: 32 })}
+    </div>
+    <span className="relative z-10 text-xs font-bold tracking-[0.2em] text-cyan-600 group-hover:text-cyan-200 transition-colors">
+      {label}
+    </span>
+    {/* Corner Accents */}
+    <div className="absolute top-0 left-0 w-2 h-2 border-t-2 border-l-2 border-cyan-500"></div>
+    <div className="absolute bottom-0 right-0 w-2 h-2 border-b-2 border-r-2 border-cyan-500"></div>
+  </motion.button>
+);
+
 export default WalletInterface;
+
