@@ -157,23 +157,30 @@ const WalletInterface = () => {
         else if (command.includes('reveal key') || command.includes('private key')) handleRevealKeyInit();
         else speak(`Command not recognized: ${command} `).then(startListening);
         break;
-      case 'SEND_RECIPIENT': handleRecipientInput(command); break;
+      case 'SEND_RECIPIENT':
+        console.log("Handling SEND_RECIPIENT with:", command);
+        handleRecipientInput(command);
+        break;
       case 'SEND_AMOUNT': handleAmountInput(command); break;
       case 'SEND_CONFIRM':
-        if (command.includes('yes')) handleSendExecute();
-        else if (command.includes('no')) resetFlow("Cancelled.");
+        console.log("Handling SEND_CONFIRM with:", command);
+        if (command.includes('confirm') || command.includes('proceed') || command.includes('do it')) {
+          console.log("User confirmed send. Executing...");
+          handleSendExecute();
+        }
+        else if (command.includes('cancel') || command.includes('abort') || command.includes('stop') || command.includes('decline')) resetFlow("Cancelled.");
         break;
       case 'ADD_CONTACT_NAME': handleAddContactName(command); break;
       case 'ADD_CONTACT_CONFIRM':
-        if (command.includes('yes')) handleAddContactExecute();
-        else if (command.includes('no')) resetFlow("Cancelled.");
+        if (command.includes('confirm') || command.includes('proceed')) handleAddContactExecute();
+        else if (command.includes('cancel') || command.includes('abort') || command.includes('decline')) resetFlow("Cancelled.");
         break;
       case 'WALLET_IMPORT':
         handleImportInput(command);
         break;
       case 'WALLET_REVEAL':
-        if (command.includes('yes')) handleRevealKeyConfirm();
-        else if (command.includes('no')) resetFlow("Cancelled.");
+        if (command.includes('confirm') || command.includes('proceed')) handleRevealKeyConfirm();
+        else if (command.includes('cancel') || command.includes('abort') || command.includes('decline')) resetFlow("Cancelled.");
         break;
       default: break;
     }
@@ -192,22 +199,48 @@ const WalletInterface = () => {
     }
   };
   const handleSendInit = () => { setFlowState('SEND_RECIPIENT'); speak("Recipient?").then(() => setTimeout(startListening, 200)); };
-  const handleRecipientInput = (name) => { setTempData(p => ({ ...p, recipient: name })); setFlowState('SEND_AMOUNT'); speak(`Amount for ${name} ? `).then(() => setTimeout(startListening, 200)); };
+  const handleRecipientInput = (name) => {
+    console.log("handleRecipientInput called with:", name);
+    setTempData(p => ({ ...p, recipient: name }));
+    setFlowState('SEND_AMOUNT');
+    console.log("Transitioning to SEND_AMOUNT, speaking...");
+    speak(`Amount for ${name} ? `).then(() => {
+      console.log("Speak finished, starting listening...");
+      setTimeout(startListening, 200);
+    });
+  };
   const handleAmountInput = (input) => {
+    console.log("handleAmountInput called with:", input);
     const nums = input.match(/\d+/);
-    if (!nums) { speak("Repeat amount.").then(startListening); return; }
+    if (!nums) {
+      console.log("No numbers found in input");
+      speak("Repeat amount.").then(startListening);
+      return;
+    }
     const amt = parseInt(nums[0]);
+    console.log("Parsed amount:", amt);
 
-    setTempData(p => ({ ...p, amount: amt })); setFlowState('SEND_CONFIRM'); speak(`Send ${amt} to ${tempData.recipient}?`).then(() => setTimeout(startListening, 200));
+    setTempData(p => ({ ...p, amount: amt }));
+    setFlowState('SEND_CONFIRM');
+    console.log("Transitioning to SEND_CONFIRM, speaking...");
+    speak(`Send ${amt} to ${tempData.recipient}? Say Confirm or Decline.`).then(() => {
+      console.log("Speak finished, starting listening for confirmation...");
+      setTimeout(startListening, 200);
+    });
   };
   const handleSendExecute = async () => {
+    console.log("handleSendExecute started. PrivateKey:", privateKey ? "Present" : "Missing", "TempData:", tempData);
     if (!privateKey) {
+      console.log("No private key. Aborting.");
       speak("Warning. No private key found. Transaction cannot be signed.");
       return;
     }
 
     try {
+      console.log("Creating wallet instance...");
       const wallet = new ethers.Wallet(privateKey);
+      console.log("Wallet created. Signing message...");
+
       const tx = {
         to: ethers.isAddress(tempData.recipient) ? tempData.recipient : "0x71C7656EC7ab88b098defB751B7401B5f6d8976F", // Mock address if name
         value: ethers.parseEther(tempData.amount.toString()),
@@ -223,8 +256,14 @@ const WalletInterface = () => {
       console.log("Transaction Signed!", signature);
       console.log("Tx Details:", tx);
 
-      setBalance(p => p - tempData.amount);
+      console.log("Updating balance...");
+      setBalance(p => {
+        console.log("Previous Balance:", p, "Amount:", tempData.amount);
+        return p - tempData.amount;
+      });
       setHistory(p => [...p, { type: 'sent', amount: tempData.amount, recipient: tempData.recipient, date: new Date(), signature }]);
+
+      console.log("Resetting flow...");
       resetFlow(`Sent ${tempData.amount}. Signed securely.`);
       setLastAction(`Sent ${tempData.amount} `);
     } catch (e) {
@@ -233,7 +272,7 @@ const WalletInterface = () => {
     }
   };
   const handleAddContactInit = () => { setFlowState('ADD_CONTACT_NAME'); speak("Name?").then(() => setTimeout(startListening, 200)); };
-  const handleAddContactName = (name) => { setTempData(p => ({ ...p, contactName: name })); setFlowState('ADD_CONTACT_CONFIRM'); speak(`Add ${name}?`).then(() => setTimeout(startListening, 200)); };
+  const handleAddContactName = (name) => { setTempData(p => ({ ...p, contactName: name })); setFlowState('ADD_CONTACT_CONFIRM'); speak(`Add ${name}? Say Confirm or Decline.`).then(() => setTimeout(startListening, 200)); };
 
   const handleAddContactExecute = () => { setWhitelist(p => [...p, tempData.contactName]); resetFlow("Added."); setLastAction(`Added ${tempData.contactName} `); };
 
@@ -284,12 +323,15 @@ const WalletInterface = () => {
   };
 
   const handleImportInput = (input) => {
+    console.log("handleImportInput called with:", input, "Step:", importStep, "Confirmation:", importConfirmation);
     const cleanInput = input.trim().toLowerCase();
 
     // 1. Handle Confirmation Response
     if (importConfirmation) {
-      if (cleanInput.includes('yes') || cleanInput.includes('correct') || cleanInput.includes('yeah')) {
+      console.log("Waiting for confirmation of:", importConfirmation);
+      if (cleanInput.includes('confirm') || cleanInput.includes('correct') || cleanInput.includes('right')) {
         // Confirmed
+        console.log("Word confirmed:", importConfirmation);
         const newSeed = [...importedSeed, importConfirmation];
         setImportedSeed(newSeed);
         setImportConfirmation(null);
@@ -313,13 +355,13 @@ const WalletInterface = () => {
             setFlowState('IDLE');
           }
         }
-      } else if (cleanInput.includes('no') || cleanInput.includes('wrong') || cleanInput.includes('spell')) {
+      } else if (cleanInput.includes('cancel') || cleanInput.includes('wrong') || cleanInput.includes('abort') || cleanInput.includes('decline')) {
         // Rejected -> Switch to Spelling Mode
         setIsSpelling(true);
         setImportConfirmation(null);
         speak("Please spell the word letter by letter.").then(() => setTimeout(startListening, 200));
       } else {
-        speak("Please say Yes or No.").then(startListening);
+        speak("Please say Confirm or Decline.").then(startListening);
       }
       return;
     }
@@ -358,7 +400,7 @@ const WalletInterface = () => {
       return;
     }
     setFlowState('WALLET_REVEAL');
-    speak("Warning. You are about to reveal your private key. This is highly sensitive. Say 'Yes' to confirm.").then(() => setTimeout(startListening, 200));
+    speak("Warning. You are about to reveal your private key. This is highly sensitive. Say Confirm to proceed, or Decline to abort.").then(() => setTimeout(startListening, 200));
   };
 
   const handleRevealKeyConfirm = () => {
@@ -410,7 +452,7 @@ const WalletInterface = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [flowState, whitelist, trigger, speak, startListening]); // Dependencies for closure capture
+  }, [flowState, whitelist, trigger, speak, startListening, isListening]); // Added isListening to dependencies
 
   const handleScreenClick = (e) => {
     if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
@@ -440,7 +482,7 @@ const WalletInterface = () => {
     if (flowState === 'WALLET_IMPORT') {
       trigger('click');
       if (importConfirmation) {
-        speak(`I heard ${importConfirmation}. Say Yes or No.`).then(() => setTimeout(startListening, 200));
+        speak(`I heard ${importConfirmation}. Say Confirm or Decline.`).then(() => setTimeout(startListening, 200));
       } else if (isSpelling) {
         speak("Please spell the word.").then(() => setTimeout(startListening, 200));
       } else {
@@ -456,10 +498,34 @@ const WalletInterface = () => {
 
   const onDoubleTap = useCallback(() => {
     console.log("onDoubleTap called. FlowState:", flowState);
+
+    // Confirmation Handling
+    if (flowState === 'SEND_CONFIRM') {
+      trigger('success');
+      handleSendExecute();
+      return;
+    }
+    if (flowState === 'ADD_CONTACT_CONFIRM') {
+      trigger('success');
+      handleAddContactExecute();
+      return;
+    }
+    if (flowState === 'WALLET_REVEAL') {
+      trigger('warning');
+      handleRevealKeyConfirm();
+      return;
+    }
+    if (flowState === 'WALLET_IMPORT' && importConfirmation) {
+      trigger('success');
+      // Simulate "confirm" input for import flow
+      handleImportInput("confirm");
+      return;
+    }
+
     if (flowState !== 'IDLE') return;
     trigger('success'); // Distinct feel
     handleHistory();
-  }, [flowState, trigger, history]); // Added history dependency
+  }, [flowState, trigger, history, importConfirmation, tempData, privateKey]); // Added dependencies
 
   const onTripleTap = useCallback(() => {
     console.log("onTripleTap called. FlowState:", flowState);
@@ -470,10 +536,24 @@ const WalletInterface = () => {
 
   const onLongPress = useCallback(() => {
     console.log("onLongPress called. FlowState:", flowState);
+
+    // Cancellation Handling
+    if (['SEND_CONFIRM', 'ADD_CONTACT_CONFIRM', 'WALLET_REVEAL'].includes(flowState)) {
+      trigger('error');
+      resetFlow("Cancelled.");
+      return;
+    }
+    if (flowState === 'WALLET_IMPORT' && importConfirmation) {
+      trigger('error');
+      // Simulate "no" input
+      handleImportInput("cancel");
+      return;
+    }
+
     if (flowState !== 'IDLE') return;
     trigger('warning'); // Heavy vibration
     handleSendInit();
-  }, [flowState, trigger]);
+  }, [flowState, trigger, importConfirmation]);
 
   const gestureHandlers = useGestures({ onSingleTap, onDoubleTap, onLongPress, onTripleTap });
 

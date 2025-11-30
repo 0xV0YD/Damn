@@ -67,6 +67,7 @@ export const useVoice = () => {
         recognition.onresult = (event) => {
             const last = event.results.length - 1;
             const text = event.results[last][0].transcript;
+            console.log("Voice Result:", text);
             setTranscript(text);
             setIsListening(false);
         };
@@ -77,6 +78,7 @@ export const useVoice = () => {
         };
 
         recognition.onend = () => {
+            console.log("Speech recognition ended");
             setIsListening(false);
         };
     }, [recognition]);
